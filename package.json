@@ -1,0 +1,14 @@
+{
+  "name": "aws-pdf",
+  "version": "1.0.0",
+  "description": "Project to merge PDF's from the S3 bucket",
+  "main": "index.js",
+  "author": "Manuel F. Del Toro",
+  "license": "MIT",
+  "private": true,
+  "dependencies": {
+    "aws-sdk": "^2.422.0",
+    "hummus": "^1.0.95",
+    "memory-streams": "^0.1.3"
+  }
+}
