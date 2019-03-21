@@ -1,7 +1,8 @@
+require('dotenv').config()
 const AWS = require('aws-sdk')
 const hummus = require('hummus')
 const memoryStreams = require('memory-streams')
-const BUCKET_NAME = 'casestack-indigo-qa-indigo-upload'
+const BUCKET_NAME = process.env.BUCKET_NAME
 
 var s3 = new AWS.S3({apiVersion: '2006-03-01'})
 
@@ -95,7 +96,7 @@ const mergeInvoices = (downloadedInvoices) => {
       mergedInvoices[key] = newBuffer
     } catch (error) {
       outStream.end();
-      throw new Error('Error during PDF combination: ' + error.message);
+      throw new Error('Error during PDF merging: ' + error.message);
     }
   }
 
@@ -118,7 +119,7 @@ const uploadMergedInvoices = async (mergedInvoices) => {
 }
 
 const runScript = async () => {
-  const date = '03-16-2019'
+  const date = '03-16-2019' // Just for testing purposes. Use the generateDate() function
 
   const invoices = groupInvoices(await listInvoices(date).then(response => response.Contents))
  
@@ -133,12 +134,12 @@ const runScript = async () => {
 
 runScript()
 
-const deleteObject = () => {
-  s3.deleteObject({
-    Bucket: BUCKET_NAME,
-    Key: 'invoicesQueue/03-16-2019/Realbridge//__CompiledInvoices.pdf'
-  })
-  .promise()
-}
+// const deleteObject = () => {
+//   s3.deleteObject({
+//     Bucket: BUCKET_NAME,
+//     Key: // key of the file you want to delete
+//   })
+//   .promise()
+// }
 
 // deleteObject()

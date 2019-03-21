@@ -8,6 +8,7 @@
   "private": true,
   "dependencies": {
     "aws-sdk": "^2.422.0",
+    "dotenv": "^7.0.0",
     "hummus": "^1.0.95",
     "memory-streams": "^0.1.3"
   }
