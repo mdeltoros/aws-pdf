@@ -15,82 +15,130 @@ const generateDate = () => {
   return (month < 10 ? '0' + month : '' + month) + "-" + day + "-" + year
 }
 
-
-
 // List all objects from S3 Bucket 
-const listObjects = (date) => {
+const listInvoices = (date) => {
   return s3.listObjects({
     Bucket: BUCKET_NAME,
-    Delimiter: '/',
-    Prefix: 'invoicesQueue/'
+    Delimiter: '/invoicesQueue',
+    Prefix: `invoicesQueue/${date}/`
   }).promise()
 }
 
-// Filter all the objects that are not folders
-const filterObjects = (objects) => {
-  return objects.filter(object => object.Size > 0)
+// Group Invoices by Customer
+const groupInvoices = (objects) => {
+  let invoicesByCustomer = {}
+  let prefix = ""
+
+  objects.forEach(object => {
+    if (object.Size === 0) {
+      invoicesByCustomer[object.Key] = []
+      prefix = object.Key
+    } else {
+      if (object.Key.indexOf('__CompiledInvoices.pdf') === -1) {
+        invoicesByCustomer[prefix].push(object)
+      }
+    }
+  })
+
+  return invoicesByCustomer
 }
 
-// Download all objects from S3 Bucket
-const downloadObject = (object) => {
-  return s3.getObject({
-    Bucket: BUCKET_NAME, 
-    Key: object.Key
-  }).promise()
-}
+const promisifyInvoices = (invoicesByCustomer) => {
+  let invoicesPromises = {}
 
-const appendPDF = (objects) => {
-  const outStream = new memoryStreams.WritableStream()
-
-  try {
-    const pdfWriter = hummus.createWriterToModify(new hummus.PDFRStreamForBuffer(objects[0].Body), new hummus.PDFStreamForResponse(outStream));
+  for (const key in invoicesByCustomer) {
+    const invoices = invoicesByCustomer[key]
     
-    objects.forEach((object, index) => {
-      index > 0 && pdfWriter.appendPDFPagesFromPDF(new hummus.PDFRStreamForBuffer(object.Body))
-    })
+    if (invoices.length > 0) {
+      invoicesPromises[key] = invoices.map(invoice => {
+        return s3.getObject({
+          Bucket: BUCKET_NAME, 
+          Key: invoice.Key
+        }).promise()
+      })
+    }
+  }  
+
+  return invoicesPromises
+}
+
+const downloadInvoices = async (invoicesByCustomer) => {
+  let invoicesPromises = {}
+
+  for (const key in invoicesByCustomer) { 
+    invoicesPromises[key] = await Promise.all(invoicesByCustomer[key])
+  }
+
+  return invoicesPromises
+}
+
+const mergeInvoices = (downloadedInvoices) => {  
+  let mergedInvoices = {}
+
+  for (const key in downloadedInvoices) {
+    const invoicesByCustomer = downloadedInvoices[key]
+
+    const outStream = new memoryStreams.WritableStream()
   
-    pdfWriter.end()
-  
-    var newBuffer = outStream.toBuffer();
-    outStream.end();
-  
-    return newBuffer
-  } catch (error) {
-    outStream.end();
-    throw new Error('Error during PDF combination: ' + error.message);
+    try {
+      const pdfWriter = hummus.createWriterToModify(new hummus.PDFRStreamForBuffer(invoicesByCustomer[0].Body), new hummus.PDFStreamForResponse(outStream));
+      
+      invoicesByCustomer.forEach((invoice, index) => {
+        index > 0 && pdfWriter.appendPDFPagesFromPDF(new hummus.PDFRStreamForBuffer(invoice.Body))
+      })
+    
+      pdfWriter.end()
+    
+      var newBuffer = outStream.toBuffer();
+      outStream.end();
+    
+      mergedInvoices[key] = newBuffer
+    } catch (error) {
+      outStream.end();
+      throw new Error('Error during PDF combination: ' + error.message);
+    }
+  }
+
+  return mergedInvoices
+}
+
+const uploadMergedInvoices = async (mergedInvoices) => {
+  for (const key in mergedInvoices) {
+    const pdfName = `${key}__CompiledInvoices.pdf`
+
+    await s3.putObject({
+      Body: mergedInvoices[key],
+      Bucket: BUCKET_NAME,
+      ACL: 'private',
+      ContentType: 'application/pdf',
+      Key: pdfName,
+      ContentDisposition: 'attachment'
+    }).promise()
   }
 }
 
-const uploadObject = async (buffer) => {
-  const key = 'temp/Merged.pdf'
-    await s3.putObject({
-        Body: buffer,
-        Bucket: BUCKET_NAME,
-        ACL: 'private',
-        ContentType: 'application/pdf',
-        Key: key,
-        ContentDisposition: 'attachment'
-      })
-      .promise()
-
-    return s3.getSignedUrl('getObject', {
-      Bucket: BUCKET_NAME,
-      Key: key,
-      Expires: 900
-    })
-}
-
 const runScript = async () => {
-  const objects = filterObjects(await listObjects().then(response => response.Contents))
+  const date = '03-16-2019'
 
-  const objectsDownloaded = objects.map(object => downloadObject(object))
+  const invoices = groupInvoices(await listInvoices(date).then(response => response.Contents))
+ 
+  const promisifiedInvoices = promisifyInvoices(invoices)
 
-  const dude = await Promise.all(objectsDownloaded)
+  const downloadedInvoices = await downloadInvoices(promisifiedInvoices)
 
-  await uploadObject(appendPDF(dude))
-   
-  
+  const mergedInvoices = mergeInvoices(downloadedInvoices)
+
+  await uploadMergedInvoices(mergedInvoices)
 }
 
-console.log(generateDate())
-// runScript()
+runScript()
+
+const deleteObject = () => {
+  s3.deleteObject({
+    Bucket: BUCKET_NAME,
+    Key: 'invoicesQueue/03-16-2019/Realbridge//__CompiledInvoices.pdf'
+  })
+  .promise()
+}
+
+// deleteObject()
